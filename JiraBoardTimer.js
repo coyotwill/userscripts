@@ -1,5 +1,6 @@
 // ==UserScript==
 // @name     JiraBoardTimer
+// @version  2.0
 // @description Adds a timer to Jira sprint boards that starts when a quick filter is selected. Usefull to track talk time during scrum meetings.
 // @match    https://*/secure/RapidBoard.jspa*
 // @require  https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
@@ -16,7 +17,6 @@ var glbOverColor = "tomato";
 
 var gblTimerStart;
 var gblTimerId;
-var glbInterval;
 
 function glbUpdateStatus(elt, speaker) {
     var elapsed = ((performance.now() - gblTimerStart) / 1000);
@@ -37,23 +37,6 @@ function glbStopStatus(elt) {
     elt.css("background-color", "initial");
 }
 
-function glbShuffle(list, insertTgt) {
-    insertTgt = insertTgt || list.first().prev();
-    // Randomize list
-    list.sort(function(){
-        return Math.random() - 0.5;
-    }).detach().insertAfter(insertTgt); // Detach and reinsert to update dom.
-}
-
-function glbRoll(list, insertTgt) {
-    setTimeout(function(){
-        glbShuffle(list, insertTgt);
-        glbInterval = glbInterval * 115 / 100
-        if(glbInterval<400) {
-            glbRoll(list, insertTgt)
-        }
-    }, glbInterval);
-}
 
 $("#content").before(`
     <div id="tmStopWatchDiv">
@@ -61,20 +44,17 @@ $("#content").before(`
     </div>
 `);
 
-$("#ghx-view-presentation").prepend(`
-    <button id="tmTimeShuf" class="aui-button">&#127922 Roll</button>
-`);
-
-$(".js-quickfilter-button").click(zEvent => {
+let quickFilterClickHandler = function(evt) {
     var statusNode = $("#tmTimeSpan");
-    var shouldStart = $(".js-quickfilter-button.ghx-active").length === 1;
+    var activeFilters = $(".js-quickfilter-button.ghx-active")
+    var shouldStart = activeFilters.length === 1;
 
     //-- Stop the timer, if any
     if(gblTimerId) clearInterval(gblTimerId);
 
-    if(shouldStart)
+    if(shouldStart && /^[A-Za-z]/.test(activeFilters[0].text) )
     {
-        var speaker = $(".js-quickfilter-button.ghx-active")[0].text;
+        var speaker = activeFilters[0].text;
         gblTimerStart = performance.now();
         // Start timer
         gblTimerId = setInterval(() => glbUpdateStatus(statusNode, speaker), 1000);
@@ -83,17 +63,29 @@ $(".js-quickfilter-button").click(zEvent => {
     {
         glbStopStatus(statusNode)
     }
-} );
+};
 
-$("#tmTimeShuf").click(zEvent => {
-    var elt = $("#js-work-quickfilters");
-    // Get all quick-filters starting with a Letter
-    var list = elt.children("dd:not(.ghx-quickfilter-trigger)").filter(function() {
-        return /^[A-Za-z]/.test($(this).text())
-    })
-    glbInterval = 40;
-    glbRoll(list);
-} );
+// Wait for quickFilters to appear before binding the click handler
+let observer = new MutationObserver(function(mutations) {
+    // Same as "each" but will break out of the loop if the inner function returns true.
+    mutations.some(function(mutation) {
+        if (mutation.target.id === "ghx-controls-work" && mutation.type === "childList") {
+            var quickfilters = $(".js-quickfilter-button");
+            if (quickfilters.length > 0) {
+                // Assign click handler and stop observing
+                quickfilters.click(quickFilterClickHandler);
+                observer.disconnect();
+                return true; // Break out of the `some` loop.
+            }
+        }
+    });
+});
+
+observer.observe(document.getElementById("ghx-controls"), {
+ childList: true,
+ subtree: true,
+});
+
 
 GM_addStyle(`
 #tmTimeSpan {
@@ -109,4 +101,3 @@ GM_addStyle(`
     border-bottom: solid 1px lightgrey;
 }
 `);
-
